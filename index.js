@@ -9,6 +9,7 @@ var fs = require('fs');
 var phrase = require('./phrase');
 var SoxCommand = require('sox-audio');
 var SHA256 = require('crypto-js/sha256');
+var Promise = require('promise');
 var app = express();
 
 app.use(bodyParser.json());
@@ -43,35 +44,40 @@ app.post('/twilio/record', function(req, res) {
     res.sendFile("twiml/record.xml", {root: root});
 });
 
-app.post('/twilio/do/record', function(req, res) {
-    console.log("Recording callback arrived");
+var writeRecordingFile = function (callSid, stream) {
+    return new Promise(function (fulfill, reject) {
+        // Create our outgoing stream
+        var filename = "recordings/" + callSid + "_audio.wav";
+        var writeStream = fs.createWriteStream(filename);
+        stream.pipe(writeStream);
 
-    var recUrl = req.body.RecordingUrl;
-    var callSid = req.body.CallSid;
+        // Handle events from the outgoing stream
+        writeStream.on('finish', function () {
+            return fulfill();
+        });
+        writeStream.on('error', function (error) {
+            return reject(error);
+        });
 
-    // Get the recording file
-    var recReq = request.get(recUrl);
-    var audioFilename = "recordings/" + callSid + "_audio.wav";
-
-    recReq.pipe(fs.createWriteStream(audioFilename)).on('finish', function() {
-        console.log("Saved WAV file");
+        // Handle errors on the incoming stream
+        stream.on('error', function (error) {
+            writeStream.end();
+            return reject(error);
+        });
     });
+};
 
-    speech_to_text.recognize({
-        audio: recReq,
-        content_type: 'audio/wav',
-        model: 'en-US_NarrowbandModel',
-        continuous: true,
-        timestamps: true
-    }, function(error, transcript) {
-        if (error) {
-            console.log('error:', error);
-        } else {
-            var phrases = [
-                phrase("never forget tomorrow is a new day")
-            ];
+var sendToWatson = function (params, phrases, stream) {
+    return new Promise(function (fulfill, reject) {
+        // Use the provided stream as the audio
+        params.audio = stream;
 
-            // Munge results
+        // Kick off the speech recognition
+        speech_to_text.recognize(params, function(error, transcript) {
+            if (error) return reject(error);
+
+
+            // Combine any result objects returned from the API
             var timestamps = [];
             var words = [];
             transcript.results.forEach(function (result) {
@@ -83,8 +89,9 @@ app.post('/twilio/do/record', function(req, res) {
                     });
                 });
             });
-
             console.log("Words: " + words.join(" "));
+
+            // Search for one of the valid phrases
             var foundPhrase = phrases.find(function (phrase) {
                 return phrase.getResult();
             });
@@ -99,76 +106,131 @@ app.post('/twilio/do/record', function(req, res) {
                 console.log("Found phrase, starting at word " + firstWord + " and ending at word " + lastWord);
                 console.log("Time range: " + startTime + " -> " + endTime);
 
+                var uniquePhrase;
                 if (foundResult.first < 2) {
                     // Phrase starts at beginning
-                    console.log("Remainder: " + words.slice(foundResult.last + 1).join(" "));
+                    uniquePhrase = words.slice(foundResult.last + 1).join(" ");
+                    console.log("Remainder: " + uniquePhrase);
                 } else {
                     // Phrase starts towards end
-                    console.log("Prefix: " + words.slice(0, foundResult.first).join(" "));
+                    uniquePhrase = words.slice(0, foundResult.first).join(" ");
+                    console.log("Prefix: " + uniquePhrase);
                 }
 
-                // Use SoX to cut the stream
-                var trimCommand = new SoxCommand()
-                    .input(audioFilename)
-                    .output("recordings/" + callSid + "_secret.wav")
-                    .outputFileType('wav')
-                    .trim(startTime, duration);
-
-                trimCommand.on('end', function () {
-                    console.log("Audio trimmed");
-                var caller       = callerCredentials(req.body);
-                var options      = {
-                    url: 'https://siv.voiceprintportal.com/sivservice/api/authentications',
-                    headers: {
-                      'VsitAccuracy'              : 5,
-                      'VsitAccuracyPassIncrement' : 2,
-                      'VsitAccuracyPasses'        : 4,
-                      'VsitConfidence'            : 89,
-                      'VsitDeveloperId'           : VOICEIT_DEV_ID,
-                      'VsitEmail'                 : caller.email,
-                      'VsitPassword'              : caller.password,
-                      'Content-Type'              : 'audio/wav'
-                    }
-                };
-
-                var vitreq = request.post(options, function(error, response, body) {
-
-                if (!error && response.statusCode == 200) {
-                  var voiceIt = JSON.parse(body);
-                  console.log(voiceIt);
-
-                  switch(voiceIt.Result) {
-                    case 'Authentication failed.':
-                      console.log("FAILED");
-                      break;
-                    default:
-                      console.log("SUCCESS");
-                  }
-                } else {
-                  console.log("API error");
-
-                  new Error(response.statusCode, body);
-                }
-
+                return fulfill({
+                    uniquePhrase: uniquePhrase,
+                    secretStart: startTime,
+                    secretEnd: endTime
                 });
-                fs.createReadStream("recordings/" + callSid + "_secret.wav").pipe(vitreq);
-                });
-
-                trimCommand.on('error', function (err) {
-                    console.log('Cannot process audio: ' + err.message);
-                });
-
-                trimCommand.run();
-
-
             } else {
-                console.log("Did not find phrase");
+                return reject(new Error("No valid secret phrase found"));
             }
-        }
-      });
+        });
+    });
+};
+
+var authenticateWithVoiceIt = function(uniquePhrase, secretFile, reqBody) {
+    return new Promise(function (fulfill, reject) {
+        var caller = callerCredentials(reqBody);
+        var options = {
+            url: 'https://siv.voiceprintportal.com/sivservice/api/authentications',
+            headers: {
+                'VsitAccuracy': 5,
+                'VsitAccuracyPassIncrement' : 2,
+                'VsitAccuracyPasses' : 4,
+                'VsitConfidence' : 89,
+                'VsitDeveloperId' : VOICEIT_DEV_ID,
+                'VsitEmail' : caller.email,
+                'VsitPassword' : caller.password,
+                'Content-Type': 'audio/wav'
+            }
+        };
+
+        var authRequest = request.post(options, function(error, response, body) {
+            if (!error && response.statusCode == 200) {
+                var voiceIt = JSON.parse(body);
+                console.log(voiceIt);
+
+                switch(voiceIt.Result) {
+                    case 'Authentication failed.':
+                        return reject(new Error(voiceIt));
+                    default:
+                        return fulfill(voiceIt);
+                }
+            } else {
+                return reject(new Error(response.statusCode, body));
+            }
+        });
+
+        var readStream = fs.createReadStream(secretFile);
+        readStream.pipe(authRequest);
+        readStream.on('error', function (error) {
+            return reject(error);
+        });
+    });
+};
+
+var extractSecret = function(callSid, secretStart, secretEnd) {
+    return new Promise(function (fulfill, reject) {
+        var audioFilename = "recordings/" + callSid + "_audio.wav";
+        var secretFilename = "recordings/" + callSid + "_secret.wav";
+
+        var trimCommand = new SoxCommand()
+            .input(audioFilename)
+            .output(secretFilename)
+            .outputFileType('wav')
+            .trim(secretStart, secretEnd - secretStart);
+
+        trimCommand.on('end', function () {
+            return fulfill(secretFilename);
+        });
+
+        trimCommand.on('error', function (error) {
+            return reject(error);
+        });
+
+        trimCommand.run();
+    });
+};
+
+app.post('/twilio/do/record', function(req, res) {
+    console.log("Recording callback arrived");
+
+    var recUrl = req.body.RecordingUrl;
+    var callSid = req.body.CallSid;
+
+    // Get the recording file
+    var recordingStream = request.get(recUrl);
+
+    Promise.all([
+        writeRecordingFile(callSid, recordingStream),
+        sendToWatson({
+            content_type: 'audio/wav',
+            model: 'en-US_NarrowbandModel',
+            continuous: true,
+            timestamps: true
+        }, [phrase("never forget tomorrow is a new day")], recordingStream)
+    ]).then(function (results) {
+        // Have the secret phrase trimmed out
+        return Promise.all([
+            results[1].uniquePhrase, // need to pass through the phrase from the original result
+            extractSecret(callSid, results[1].secretStart, results[1].secretEnd)
+        ]);
+    }, function (error) {
+        console.log("Could not save and transcribe recording");
+        throw error;
+    }).then(function (results) {
+        return authenticateWithVoiceIt(results[0], results[1], req.body);
+    }, function (error) {
+        console.log("Error trimming audio file");
+        throw error;
+    }).then(function (result) {
+        console.log("Auth result: ", result);
+    }, function (error) {
+        console.log(error);
+    });
 
     res.sendFile("twiml/hangup.xml", {root: root});
-
 });
 
 app.post('/twilio/do/transcribe', function(req, res) {
