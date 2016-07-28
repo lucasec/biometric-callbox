@@ -40,6 +40,11 @@ module.exports = function (phrase) {
             index++;
         },
 
+        acceptAll: function (phrase) {
+            var words = phrase.split(" ");
+            words.forEach(this.accept);
+        },
+
         reset: function () {
             index = 0;
             found = false;
