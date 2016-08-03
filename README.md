@@ -15,6 +15,7 @@ Running
 
 1. Install npm dependencies: `npm install`
 2. Clone the sample config file: `cp config.json.sample config.json`
-3. Edit `config.json` and fill in all required fields.  Make sure to specify the base URL.
-4. Run with `node server.js`
+3. Make the recordings directory: `mkdir recordings`
+4. Edit `config.json` and fill in all required fields.  Make sure to specify the base URL.
+5. Run with `node server.js`
 
