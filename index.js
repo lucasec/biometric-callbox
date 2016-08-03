@@ -11,30 +11,29 @@ var userdb = require('./userdb');
 var credentials = require('./credentials');
 var Promise = require('promise');
 
-// Create our context with some configuration parameters
+// Load configuration
+var config = JSON.parse(fs.readFileSync("config.json", "utf8"));
+
 var context = {
     watson: {
-        username: '***REMOVED***',
-        password: '***REMOVED***'
+        username: config.watson.username,
+        password: config.watson.password
     },
     voiceit: {
-        dev_id: '***REMOVED***'
+        dev_id: config.voiceit.dev_id
     },
-    phrases: [
-        "never forget tomorrow is a new day",
-        "today is a nice day to go for a walk",
-        "zoos are filled with small and large animals",
-        "remember to wash your hands before eating"
-    ],
+    phrases: config.phrases,
     users: userdb(),
-    twilio: twilio("***REMOVED***", "***REMOVED***")
+    twilio: twilio(config.twilio.account_sid, config.twilio.auth_token),
+    url: config.url
 };
 
-var VOICEIT_DEV_ID = context.voiceit.dev_id;
-
-// Add a few test users
-context.users.add("Lucas Christian", "***REMOVED***", "this is a cool demo");
-context.users.add("Stefan", "***REMOVED***", "unless you are in the movie groundhog day");
+var user;
+for (var userIndex in config.users) {
+    user = config.users[userIndex];
+    console.log("Adding user: ", user);
+    context.users.add(user.name, user.phone, user.phrase);
+}
 
 // Set up our app
 var app = express();
@@ -91,7 +90,7 @@ app.post('/process_authenticate', function(req, res) {
     }).then(function (result) {
         console.log("Auth result: ", result);
         context.twilio.calls(callSid).update({
-            url: "http://8ba6b060.ngrok.io/accept_authenticate",
+            url: context.url + "/accept_authenticate",
             method: "POST"
         }, function(err, call) {
             if (err) {
@@ -101,7 +100,7 @@ app.post('/process_authenticate', function(req, res) {
     }).catch(function (error) {
         console.log(error);
         context.twilio.calls(callSid).update({
-            url: "http://8ba6b060.ngrok.io/reject_authenticate",
+            url: context.url + "/reject_authenticate",
             method: "POST"
         }, function(err, call) {
             if (err) {
@@ -151,7 +150,7 @@ app.post('/incoming_call', function(req, res) {
     headers: {
       'VsitEmail'       : caller.email,
       'VsitPassword'    : caller.password,
-      'VsitDeveloperId' : VOICEIT_DEV_ID
+      'VsitDeveloperId' : context.voiceit.dev_id
     }
   };
 
@@ -175,7 +174,7 @@ app.post('/incoming_call', function(req, res) {
           var options = {
             url: 'https://siv.voiceprintportal.com/sivservice/api/users',
             headers: {
-              'VsitDeveloperId' : VOICEIT_DEV_ID,
+              'VsitDeveloperId' : context.voiceit.dev_id,
               'VsitEmail'       : caller.email,
               'VsitFirstName'   : 'First' + caller.number,
               'VsitLastName'    : 'Last' + caller.number,
@@ -232,7 +231,7 @@ app.post('/process_enrollment', function(req, res) {
   var options      = {
     url: 'https://siv.voiceprintportal.com/sivservice/api/enrollments/bywavurl',
     headers: {
-      'VsitDeveloperId' : VOICEIT_DEV_ID,
+      'VsitDeveloperId' : context.voiceit.dev_id,
       'VsitEmail'       : caller.email,
       'VsitPassword'    : caller.password,
       'VsitwavURL'      : recordingURL

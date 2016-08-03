@@ -1,0 +1,28 @@
+{
+  "watson": {
+    "username": "WATSON_USERNAME_HERE",
+    "password": "WATSON_PASSWORD_HERE"
+  },
+  "voiceit": {
+    "dev_id": "VOICEIT_DEV_ID_HERE"
+  },
+  "phrases": [
+    "never forget tomorrow is a new day",
+    "today is a nice day to go for a walk",
+    "zoos are filled with small and large animals",
+    "remember to wash your hands before eating"
+  ],
+  "users": [
+    {
+      "name": "Lucas",
+      "phone": "+10000000000",
+      "phrase": "this is a sample phrase"
+    }
+  ],
+  "twilio": {
+    "account_sid": "TWILIO_ACCOUNT_SID_HERE",
+    "auth_token": "TWILIO_AUTH_TOKEN_HERE"
+  },
+  "url": "http://www.myappurlhere.com"
+}
+
