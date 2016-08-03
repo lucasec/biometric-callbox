@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say>Please state your username and password</Say>
-  <Record timeout="5" action="/twilio/do/record" />
-</Response>
