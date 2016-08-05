@@ -53,7 +53,7 @@ app.get('/', function (req, res) {
 
 app.post('/authenticate', function(req, res) {
     var twiml = new twilio.TwimlResponse();
-    twiml.say("Please state your username and password");
+    twiml.say("Please identify after the beep");
     twiml.record({
         action: '/process_authenticate',
         timeout: 3
